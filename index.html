@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Human Brain Anatomy | XR Blocks</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <link type="text/css" rel="stylesheet" href="https://xrblocks.github.io/css/xr.css" />
+    
+    <style>
+      /* Override the default dark background to match the white studio */
+      body, .background-image {
+        background-color: #f5f5f5 !important;
+        background-image: none !important;
+      }
+    </style>
+
+    <script>
+      window.litDisableBundleWarning = true;
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+          "troika-three-text": "https://cdn.jsdelivr.net/gh/protectwise/troika@028b81cf308f0f22e5aa8e78196be56ec1997af5/packages/troika-three-text/src/index.js",
+          "troika-three-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-three-utils/src/index.js",
+          "troika-worker-utils": "https://cdn.jsdelivr.net/gh/protectwise/troika@v0.52.4/packages/troika-worker-utils/src/index.js",
+          "bidi-js": "https://esm.sh/bidi-js@%5E1.0.2?target=es2022",
+          "webgl-sdf-generator": "https://esm.sh/webgl-sdf-generator@1.1.1/es2022/webgl-sdf-generator.mjs",
+          "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js",
+          "lit/": "https://esm.run/lit@3/",
+          "xrblocks": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/xrblocks.js",
+          "xrblocks/addons/": "https://cdn.jsdelivr.net/npm/xrblocks@0.11.0/build/addons/",
+          "@google/genai": "https://cdn.jsdelivr.net/npm/@google/genai/+esm"
+        }
+      }
+    </script>
+  </head>
+
+  <body>
+    <script type="module">
+      import 'xrblocks/addons/simulator/SimulatorAddons.js';
+      import * as THREE from 'three';
+      import * as xb from 'xrblocks';
+
+      // Data containing colors, rough anatomical positions/scales, and explanations.
+      const BRAIN_PARTS = {
+        'Frontal Lobe': { 
+          color: 0xff9999, // Pastel Red
+          pos: [0, 0.12, 0.08], 
+          scale: [0.12, 0.14, 0.14], 
+          desc: "Located at the front of the brain. It controls important cognitive skills such as emotional expression, problem solving, memory, language, judgment, and voluntary movement." 
+        },
+        'Parietal Lobe': { 
+          color: 0x99ccff, // Pastel Blue
+          pos: [0, 0.18, -0.06], 
+          scale: [0.13, 0.12, 0.11], 
+          desc: "Positioned near the top and center. It processes sensory information it receives from the outside world, mainly relating to touch, taste, and temperature." 
+        },
+        'Occipital Lobe': { 
+          color: 0x99ff99, // Pastel Green
+          pos: [0, 0.08, -0.16], 
+          scale: [0.11, 0.11, 0.09], 
+          desc: "Located at the back of the brain. It is primarily responsible for visual perception, including colour, form, and motion processing." 
+        },
+        'Temporal Lobe': { 
+          color: 0xffff99, // Pastel Yellow
+          pos: [0, 0.04, 0], 
+          scale: [0.16, 0.09, 0.12], 
+          desc: "Located on the bottom-sides. It is heavily involved in processing auditory information, understanding language, and encoding memory." 
+        },
+        'Cerebellum': { 
+          color: 0xcc99ff, // Pastel Purple
+          pos: [0, -0.04, -0.14], 
+          scale: [0.10, 0.07, 0.08], 
+          desc: "Often called the 'little brain', located at the back-bottom. It coordinates voluntary movements such as posture, balance, coordination, and speech." 
+        },
+        'Brainstem': { 
+          color: 0xcccccc, // Light Grey
+          pos: [0, -0.1, -0.05], 
+          scale: [0.03, 0.1, 0.03], // Radius, height, radius for cylinder
+          desc: "Connects the brain to the spinal cord. It controls the flow of messages between the brain and the rest of the body, and regulates basic body functions like breathing and heart rate." 
+        }
+      };
+
+      /**
+       * Main application script for the Brain Anatomy Explorer.
+       */
+      class BrainAnatomyApp extends xb.Script {
+        init() {
+          // Initialize AI module
+          this.ai = xb.core.ai;
+          this.isProcessing = false;
+          this.currentLobe = null;
+
+          // 1. Setup White Studio Environment
+          xb.core.scene.background = new THREE.Color(0xf5f5f5);
+          xb.core.scene.fog = new THREE.Fog(0xf5f5f5, 2, 10);
+
+          // 2. Setup Studio Lighting
+          this.add(new THREE.HemisphereLight(0xffffff, 0xd0d0d0, 2.0));
+          const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+          directionalLight.position.set(1, 2, 1);
+          this.add(directionalLight);
+
+          // 3. Setup Brain Model Container
+          this.brainContainer = new THREE.Group();
+          // Positioned at chest/eye level, pushed back a bit
+          this.brainContainer.position.set(-0.3, xb.core.user.height - 0.2, -xb.core.user.objectDistance);
+          this.add(this.brainContainer);
+
+          // 4. Construct the Brain out of primitives
+          this.lobes = {};
+          for (const [name, data] of Object.entries(BRAIN_PARTS)) {
+            let geometry;
+            if (name === 'Brainstem') {
+              geometry = new THREE.CylinderGeometry(data.scale[0], data.scale[0] * 0.8, data.scale[1], 32);
+            } else {
+              geometry = new THREE.SphereGeometry(1, 32, 32);
+            }
+
+            const material = new THREE.MeshStandardMaterial({
+              color: data.color,
+              roughness: 0.6,
+              metalness: 0.1
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            
+            if (name !== 'Brainstem') {
+              mesh.scale.set(...data.scale);
+            }
+            
+            mesh.position.set(...data.pos);
+            mesh.userData = { 
+              lobeName: name, 
+              baseScale: mesh.scale.clone() 
+            };
+            
+            this.brainContainer.add(mesh);
+            this.lobes[name] = mesh;
+          }
+
+          // 5. Setup Information UI Panel
+          this.buildInfoPanel();
+
+          // Interaction State
+          this.isDragging = false;
+          this.activeController = null;
+          this.lastPointerPos = new THREE.Vector3();
+          
+          // Auto-rotation variable
+          this.time = 0;
+        }
+
+        buildInfoPanel() {
+          this.infoPanel = new xb.SpatialPanel({
+            width: 1.2,
+            height: 1.4, // Made taller to fit the AI elements
+            backgroundColor: '#2b2b2bee', // Dark grey for contrast in white studio
+            showEdge: true
+          });
+          
+          // Position to the right of the brain
+          this.infoPanel.position.set(0.6, xb.core.user.height - 0.1, -xb.core.user.objectDistance);
+          this.infoPanel.rotation.set(0, -Math.PI / 8, 0);
+          this.add(this.infoPanel);
+
+          const grid = this.infoPanel.addGrid();
+          
+          // Title Row (10%)
+          this.titleText = grid.addRow({ weight: 0.1 }).addText({
+            text: 'Human Brain Anatomy',
+            fontSize: 0.08,
+            fontColor: '#ffffff'
+          });
+
+          // Description Row (25%)
+          this.descText = grid.addRow({ weight: 0.25 }).addCol({ weight: 0.9 }).addText({
+            text: 'Welcome to the virtual anatomy studio.\n\nSelect a specific part of the brain to learn about its function. You can also pinch and drag the brain to rotate it around.',
+            fontSize: 0.05,
+            fontColor: '#cccccc',
+            textAlign: 'left',
+            anchorY: 'top'
+          });
+
+          // AI Action Buttons Row (15%)
+          const btnRow = grid.addRow({ weight: 0.15 });
+          
+          this.factBtn = btnRow.addCol({ weight: 0.45 }).addTextButton({
+            text: '✨ Fun Fact',
+            fontSize: 0.12,
+            backgroundColor: '#4285f4',
+            fontColor: '#ffffff'
+          });
+          
+          btnRow.addCol({ weight: 0.1 }); // Spacer
+          
+          this.damageBtn = btnRow.addCol({ weight: 0.45 }).addTextButton({
+            text: '✨ Clinical Effects',
+            fontSize: 0.12,
+            backgroundColor: '#ea4335',
+            fontColor: '#ffffff'
+          });
+
+          // Bind trigger events to AI function
+          this.factBtn.onTriggered = () => this.askGemini('fact');
+          this.damageBtn.onTriggered = () => this.askGemini('damage');
+
+          // AI Response Row (50%)
+          const aiRow = grid.addRow({ weight: 0.5 });
+          this.aiResponseView = new xb.ScrollingTroikaTextView({
+            text: '\nSelect a brain part above and click an AI button to learn more! ✨',
+            fontSize: 0.045,
+            textAlign: 'left'
+          });
+          aiRow.addCol({weight: 0.9}).add(this.aiResponseView);
+        }
+
+        /**
+         * Triggers the Gemini AI to generate insights based on the selected lobe.
+         */
+        async askGemini(type) {
+          if (!this.currentLobe) {
+            this.aiResponseView.setText('Please select a part of the brain first!');
+            return;
+          }
+          
+          if (this.isProcessing || !this.ai?.isAvailable()) {
+            if (!this.ai?.isAvailable()) {
+              this.aiResponseView.setText('⚠️ AI is not available. Please verify the API settings.');
+            }
+            return;
+          }
+
+          this.isProcessing = true;
+          this.aiResponseView.setText('\n✨ Consulting the medical AI...');
+
+          try {
+            const prompt = type === 'fact'
+              ? `Tell me a fascinating, lesser-known fun fact about the ${this.currentLobe} of the human brain. Keep it concise (under 3 sentences).`
+              : `What are the typical clinical symptoms if the ${this.currentLobe} of the human brain is damaged or injured? Keep it concise (under 3 sentences).`;
+
+            const parts = [{ text: prompt }];
+            const response = await this.ai.query({
+              type: 'multiPart',
+              parts: parts,
+            });
+            
+            this.aiResponseView.setText(`\n🤖 AI:\n\n${response.text}`);
+          } catch (error) {
+            this.aiResponseView.setText(`\n❌ Error: ${error.message}`);
+          }
+
+          this.isProcessing = false;
+        }
+
+        /**
+         * Triggered when the user clicks (simulator) or pinches (XR).
+         */
+        onSelectStart(event) {
+          const controller = event.target;
+          
+          // Check if we hit any part of the brain
+          const intersections = xb.core.input.intersectObjectByController(controller, this.brainContainer);
+          
+          if (intersections.length > 0) {
+            const hitMesh = intersections[0].object;
+            const lobeName = hitMesh.userData.lobeName;
+            
+            // Highlight the selected part and update UI
+            this.selectLobe(lobeName);
+            
+            // Setup dragging state to allow manual rotation
+            this.isDragging = true;
+            this.activeController = controller;
+            this.lastPointerPos.copy(controller.position);
+          } else {
+            // Deselect if clicking in empty space
+            this.selectLobe(null);
+          }
+        }
+
+        /**
+         * Triggered while the user is holding the click/pinch and moving.
+         * Used to rotate the brain model manually.
+         */
+        onSelecting(event) {
+          if (this.isDragging && event.target === this.activeController) {
+            const currentPos = event.target.position;
+            
+            // Calculate delta movement
+            const deltaX = currentPos.x - this.lastPointerPos.x;
+            const deltaY = currentPos.y - this.lastPointerPos.y;
+            
+            // Apply rotation (drag X rotates around Y axis, drag Y rotates around X axis)
+            this.brainContainer.rotation.y += deltaX * 10;
+            this.brainContainer.rotation.x -= deltaY * 10;
+            
+            // Update last position
+            this.lastPointerPos.copy(currentPos);
+          }
+        }
+
+        /**
+         * Triggered when the user releases the click/pinch.
+         */
+        onSelectEnd(event) {
+          if (event.target === this.activeController) {
+            this.isDragging = false;
+            this.activeController = null;
+          }
+        }
+
+        /**
+         * Visually highlights a specific lobe and updates the text panel.
+         */
+        selectLobe(name) {
+          // Reset all lobes to their base state
+          Object.values(this.lobes).forEach(mesh => {
+            mesh.material.emissive.setHex(0x000000);
+            mesh.scale.copy(mesh.userData.baseScale);
+          });
+
+          this.currentLobe = name;
+
+          if (name && BRAIN_PARTS[name]) {
+            // Highlight selected
+            const mesh = this.lobes[name];
+            mesh.material.emissive.setHex(0x222222); // Slight glow
+            mesh.scale.copy(mesh.userData.baseScale).multiplyScalar(1.05); // Slight pop-out
+
+            // Update UI
+            this.titleText.setText(name);
+            this.descText.setText(BRAIN_PARTS[name].desc);
+            this.aiResponseView.setText('\nSelect an AI tool above to explore deeper! ✨');
+          } else {
+            // Revert to default text
+            this.titleText.setText('Human Brain Anatomy');
+            this.descText.setText('Welcome to the virtual anatomy studio.\n\nSelect a specific part of the brain to learn about its function. You can also pinch and drag the brain to rotate it around.');
+            this.aiResponseView.setText('\nSelect a brain part above and click an AI button to learn more! ✨');
+          }
+        }
+
+        update() {
+          // Slowly auto-rotate the brain if not currently being dragged
+          if (!this.isDragging) {
+            this.brainContainer.rotation.y += 0.2 * xb.getDeltaTime();
+          }
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        // Configure options to enable UI interactions and AI
+        const options = new xb.Options();
+        options.enableUI();
+        options.enableAI();
+        options.setAppTitle('Brain Anatomy Explorer');
+        
+        // Add our script and initialize XR Blocks
+        xb.add(new BrainAnatomyApp());
+        xb.init(options);
+      });
+    </script>
+  </body>
+</html>
